@@ -167,18 +167,15 @@ class time_series_analysis(object):
         df_return = df.copy()
         return df_return[df['date'] < end_time]
 
-    
 
     def normalise(self, df, x, y):
 
         """Normalise column x in df by column y."""    
 
-        df_return = df.copy()
-
         slope = self.linear_plot_params(df[x], df[y]).slope
         normalisation_factor = df[x] * slope
+        mean_normalisation_factor = np.mean(normalisation_factor)
+        
+        df[y] = (df[y] / normalisation_factor).multiply(mean_normalisation_factor)
 
-        df_return[y] = (df[y]  / normalisation_factor).multiply(np.mean(normalisation_factor))
-
-        return df_return
-
+        return df
