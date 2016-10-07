@@ -171,11 +171,40 @@ class time_series_analysis(object):
     def normalise(self, df, x, y):
 
         """Normalise column x in df by column y."""    
+        try:
+            slope = self.linear_plot_params(df[x], df[y]).slope
+            normalisation_factor = df[x] * slope
+            mean_normalisation_factor = np.mean(normalisation_factor)
 
-        slope = self.linear_plot_params(df[x], df[y]).slope
-        normalisation_factor = df[x] * slope
-        mean_normalisation_factor = np.mean(normalisation_factor)
-        
-        df[y] = (df[y] / normalisation_factor).multiply(mean_normalisation_factor)
-
+            df[y] = (df[y] / normalisation_factor).multiply(mean_normalisation_factor)
+       
+        except KeyError:
+            print "%s is not a correct key, no normalisation for %s" % (x, y)
+            
         return df
+
+
+    def get_reagent_ion_r2s(self, df, y):
+        
+        "Returns a dict with reagent ion keys and R2 values to y."""
+    
+        trace_and_norm = {}       
+        reagent_ions = {}
+        for reagent_ion in self.reagent_ions:
+            reagent_ions[reagent_ion] = round(self.linear_plot_params(df[reagent_ion], df[y]).rvalue**2, 4)
+
+        return reagent_ions
+    
+    
+    def best_reagent_ion(self, df, y, R2_limit):  
+        
+        "Returns the key of the highest R2 value in the dict from self.norm_ion_r2s."""
+
+        reagent_ions = self.get_reagent_ion_r2s(df, y)  
+        best = max(reagent_ions.iteritems(), key=operator.itemgetter(1))[0]
+
+        if reagent_ions[best] < R2_limit:
+            best = "less than %f" % round(R2_limit, 2)
+
+        return best 
+
