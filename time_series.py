@@ -3,7 +3,7 @@ class time_series_analysis(object):
     def __init__(self):
         
         self.igor_time = 2082844800
-
+        self.reagent_ions = ["I_", "I_H2O__", "SUM_I_H2O"]
 
     def time_series(self, df, y):
 
@@ -57,7 +57,8 @@ class time_series_analysis(object):
         """Calculate plot params."""
 
         mask = ~np.isnan(x.astype(float)) & ~np.isnan(y.astype(float))
-        return sc.stats.linregress(x[mask], y[mask])
+        return scipy.stats.linregress(x[mask], y[mask])
+        #return sc.stats.linregress(x, y)
 
 
     def read_time_series_text_to_dataframe(self, path):
@@ -87,8 +88,12 @@ class time_series_analysis(object):
         
         new_time_column = pd.Series([dt.datetime.fromtimestamp(np.round(x) - self.igor_time) for x in df[igor_time_column_name]])
         returndf['date'] = new_time_column
-        returndf.set_index('date')
+        #returndf.set_index('date')
+        returndf = returndf.set_index(pd.DatetimeIndex(returndf["date"]))
 
+        
+        
+        del df
         return returndf
 
 
@@ -127,7 +132,7 @@ class time_series_analysis(object):
                 except TypeError:
                     pass
 
-
+        del df
         return returndf
 
 
@@ -149,6 +154,7 @@ class time_series_analysis(object):
         mask = (df['date'] > start_time) & (df['date'] <= end_time)
         df_return.loc[mask] = None
 
+        del df
         return df_return
 
 
@@ -172,15 +178,18 @@ class time_series_analysis(object):
 
         """Normalise column x in df by column y."""    
         try:
-            slope = self.linear_plot_params(df[x], df[y]).slope
-            normalisation_factor = df[x] * slope
-            mean_normalisation_factor = np.mean(normalisation_factor)
-
-            df[y] = (df[y] / normalisation_factor).multiply(mean_normalisation_factor)
-       
-        except KeyError:
-            print "%s is not a correct key, no normalisation for %s" % (x, y)
             
+            if x != y: 
+                slope = self.linear_plot_params(df[x], df[y]).slope
+                normalisation_factor = df[x] * slope
+                mean_normalisation_factor = np.mean(normalisation_factor)
+
+                df[y] = (df[y] / normalisation_factor).multiply(mean_normalisation_factor)
+
+        except KeyError:
+           # print "'%s' is not a valid key, no normalisation for %s" % (x, y)
+           pass 
+        
         return df
 
 
@@ -204,7 +213,45 @@ class time_series_analysis(object):
         best = max(reagent_ions.iteritems(), key=operator.itemgetter(1))[0]
 
         if reagent_ions[best] < R2_limit:
-            best = "less than %f" % round(R2_limit, 2)
+            best = "%f R2 less than %f" % (reagent_ions[best], round(R2_limit, 2))
 
         return best 
+    
+    
+    def top_correlations(self, df, y, n):
+
+        """Returns list of top n correlations in df for species y."""
+
+        # Get correlations
+        df_corr = df.corr()
+        #list top 20 wave names that correlate
+        top_hits = list(df_corr[y].sort_values(ascending = False).head((n+1)).index)
+        # put date in as well
+        top_hits.insert(0, "date")
+        
+        
+        return top_hits
+    
+    
+    def diurnalise(self, df):  
+
+        """
+        Returns descriptive stats on waves
+        in a df.
+
+        This one can take a while so best to
+        use on a smaller number of time series.
+
+        Must have 'date' set as 
+        datetime index i.e.
+        df = df.set_index(pd.DatetimeIndex(df["date"]))
+        """
+
+        df['Time'] = df.index.strftime("%H:%M")
+        df = df.groupby('Time').describe().unstack()
+        df.index = pd.to_datetime(df.index.astype(str))
+
+        returndf = df.copy()
+
+        return returndf
 

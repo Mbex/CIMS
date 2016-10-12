@@ -1,3 +1,5 @@
+## FUNCTIONS
+
 class Peaklist(object):
 
     def __init__(self):
@@ -9,29 +11,30 @@ class Peaklist(object):
             'N': 14.003074, 'I': 126.904477, 'Cl': 34.968853, 'Br': 78.918336,
             'S': 31.972072, 'F': 18.998403}
         
-        self.kendrick_bases = ["CH2", "O", "OH", "H2", "CO", "CHO", "I"]
+        self.kendrick_bases = ["CH2", "O", "OH", "H2", "CO", "CHO", "NO2", "NO3"]
 
-        
+           
     def remove_punctuation(self, string):
         
         """remove minus from string"""
         
-        return string.replace("-","")
+        return string.replace("-","").replace("'","")
         
         
     def _Get_molecule_params(self, molecule):
         
         """Hit API to get molecule parameters"""
         
-        import urllib, urllib2, json
+         import urllib, urllib2, json
 
-        params = urllib.urlencode({'mf': molecule})
-        response = urllib2.urlopen('http://www.chemcalc.org/chemcalc/mf',params)
-        data = json.loads(response.read())
+         params = urllib.urlencode({'mf': molecule})
         
-        return data
+         response = urllib2.urlopen('http://chemcalc.org/chemcalc/mf',params)
+         data = json.loads(response.read())
         
-        
+         return data
+
+    
     def mass_calculator(self, moiety):
 
         """Calculates exact mass for a given formula (string)."""
@@ -63,8 +66,14 @@ class Peaklist(object):
     
         """How many kendrick_base amu1 and amu2 are different from each other."""
 
-        return int((np.round(amu1) - np.round(amu2)) / np.round(kendrick_base))
-
+        ans = (np.round(amu1) - np.round(amu2)) / np.round(kendrick_base)
+   
+        if ans % 1 != 0:
+            
+            ans = "not integer bases apart"
+        
+        return ans 
+    
 
     def fAmuApart(self, amu1, amu2, kendrick_base):
 
@@ -90,20 +99,6 @@ class Peaklist(object):
         return KMD2minus < KMD1 < KMD2plus
 
 
-    def reassign_unknown_number(self, df, col, pattern):
-
-        """Renumber instances of a pattern in a dataframe column."""
-
-        count = 1
-        names = df[col]
-        for name in names:
-            if pattern in name:
-                df.loc[df[col] == name, col] = pattern + "%04d" % (count,)
-                count = count + 1
-
-        return df
-
-
     def load_peak_list(self, directory, fname, **kwargs):
 
         """Returns dataframe with peaklist information."""
@@ -112,8 +107,23 @@ class Peaklist(object):
 
         df = pd.read_csv(directory+fname, header=0, **kwargs)
         df = df[['ion','sumFormula','x0']]
-        df.columns = ['name', 'formula', 'exactMass']
-        df.sort_values('exactMass').reset_index(drop=True)
+        #df.columns = ['name', 'formula', 'exactMass']
+        df.sort_values('sumFormula').reset_index(drop=True)
+
+        return df
+
+    
+    def rename_unknowns(self, df, col, pattern="unknown"):
+
+        "used for renaming unknowns. reset numbers at end of unknown pattern"
+
+        names = peakList[col]
+        count = 1
+        for i, name in enumerate(names):
+            if pattern in name:
+                newname = pattern + "%04d" % (count,)
+                peakList.loc[i, col] = newname
+                count = count + 1
 
         return df
 
@@ -129,20 +139,19 @@ class Peaklist(object):
         import numpy as np
 
         regaentIonIntegerMass = np.round(reagent_ion_exact_mass)
-
-        speciesList['integerMass'] = np.round(speciesList['exactMass'])
-
+        df['integerMass'] = np.round(df['x0'])
+          
         # Duplicate - prep for 'removing reagent ion' columns
-        df['exactMassNoRI'] = df['exactMass']
+        df['exactMassNoRI'] = df['x0']
         df['integerMassNoRI'] = df['integerMass']
         # Remove reagent ion
-        df.loc[speciesList['integerMass'] > regaentIonIntegerMass, 'integerMassNoRI'] = df['integerMass'] - regaentIonIntegerMass
-        df.loc[speciesList['exactMass'] > regaentIonIntegerMass, 'exactMassNoRI'] = df['exactMass'] - regaentIonIntegerMass 
+        df.loc[df['integerMass'] > regaentIonIntegerMass, 'integerMassNoRI'] = df['integerMass'] - regaentIonIntegerMass
+        df.loc[df['x0'] > regaentIonIntegerMass, 'exactMassNoRI'] = df['x0'] - regaentIonIntegerMass 
         # mass defect
         df['massDefect'] = df['exactMassNoRI'] - df['integerMassNoRI']
 
-        return df
-
+        return df  
+    
 
     def calc_kendrick_mass_defect(self, df, kendrick_base, kendrick_base_mass):
 
@@ -200,8 +209,8 @@ class Peaklist(object):
         # For every entry append the matching list into the matches column
         for i, entry in enumerate(matches): 
 
-            name = df.ix[i,'name']
-            match = map(lambda x: df.ix[x,'name'], entry)
+            name = df.ix[i,'ion']
+            match = map(lambda x: df.ix[x,'ion'], entry)
             if name in match:
                 match.remove(name)
             toAppend = str(match).replace('[',"").replace(']',"")
@@ -211,43 +220,60 @@ class Peaklist(object):
         return df
     
     
-    def calc_unknown_formula(self, unknown_mass, formula,  kendrick_base):
+    def calc_unknown_formula(self, unknown_mass, formula, kendrick_base):
 
         """
         Returns estimated formula for unknown_mass based on formula, and kendrick_base
         """
         
+        # get mass and elements for provided formula
         formula_mass = self.mass_calculator(self.remove_punctuation(formula))
         formula_elements = self.count_elements(self.remove_punctuation(formula))
-         
+        
+        # get mass and elements for provided kendrick base
         kendrick_base_mass = self.mass_calculator(self.remove_punctuation(kendrick_base))
         kendrick_base_elements = self.count_elements(kendrick_base)
-                
+               
+        # integer multiple of kendrick bases
         kmd_units = self.kendrick_bases_apart(formula_mass, unknown_mass, kendrick_base_mass)
+        
+        # account for when kendrick base element is not in the provided formula
+        if kendrick_base not in formula_elements:
+            for element in self.count_elements(kendrick_base).keys():
+                formula_elements[element] = 0
+    
+        # populate dictionary with keys of elements and values of element count
         unknown_formula_elements = collections.OrderedDict()
-      
         for element in formula_elements:
 
             if element in kendrick_base_elements:
-                unknown_formula_elements[element] = formula_elements[element] - (kmd_units * kendrick_base_elements[element])
+                unknown_formula_elements[element] = int(formula_elements[element] - (kmd_units * kendrick_base_elements[element]))
             else:
-                unknown_formula_elements[element] = formula_elements[element]        
+                unknown_formula_elements[element] = int(formula_elements[element])
         
+        # order the dictionary
         unknown_formula_elements = collections.OrderedDict((k, v) for k, v in unknown_formula_elements.iteritems() if v)
         
-        estimated = ''.join("%s%r" % (key,val) for (key,val) in unknown_formula_elements.iteritems())     
-        return str(estimated.replace("1",""))
+        # if the kmd_units come back as a string then the known and unknown didnt match
+        if isinstance(kmd_units, str):
+            estimated = "not integer kmd_units away"
+        elif sum(1 for number in unknown_formula_elements.values() if number < 0) > 0:
+            estimated = "cant have negative subscript in formula"
+        else:
+            estimated = ''.join("%s%r" % (key,val) for (key,val) in unknown_formula_elements.iteritems())  
+            
+        return str(estimated)
 
 
-    def get_kmd_suggestions(self, speciesList, kendrick_base):
+    def get_kmd_suggestions(self, df, kendrick_base):
 
         same = ""
         count = 0
-        exact_masses = speciesList.loc[:,"exactMass"]
-        match_column = speciesList.loc[:,"KMD_"+kendrick_base+"_matches"]
-        speciesList[kendrick_base+"_suggested"] = None
+        exact_masses = df.loc[:,"x0"]
+        match_column = df.loc[:,"KMD_"+kendrick_base+"_matches"]
+        df[kendrick_base+"_suggested"] = None
 
-        names = speciesList.loc[:,"name"]
+        names = df.loc[:,"ion"]
         #for every entry
         for i, name in enumerate(names):
 
@@ -267,14 +293,19 @@ class Peaklist(object):
                     known_estimated = {"known": known, "estimated": estimated}
                     estimates.append(known_estimated)
                     # print count, known + " suggests <" + name + "> (" + str(unknown_mass) + ") is " + estimated 
-                speciesList.loc[i,kendrick_base+"_suggested"] = str(estimates)
+                df.loc[i,kendrick_base+"_suggested"] = str(estimates)
                 #print "\n"
                 count += 1
 
-        return speciesList    
+        return df    
+    
+    
+    
+    
 
-
-
-
-
+    
+    
+        
+#initialise peak list object
+pl = Peaklist()
 
