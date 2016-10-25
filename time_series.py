@@ -1,57 +1,19 @@
 class time_series_analysis(object):
     
-    def __init__(self):
+    def __init__(self, reagent_ion):
         
         self.igor_time = 2082844800
-        self.reagent_ions = ["I_", "I_H2O__", "SUM_I_H2O"]
+        self.reagent_ion = reagent_ion
+        self.time_series_raw = {}
+        self.time_series_normalised = {}
+        self.time_series_normalised_background = {}
+        self.date = pd.Series()
+        self.diurnal_time = []
+        self.diurnal_time_series = {}
+        self.correlation_dataframe = pd.DataFrame()
 
-    def time_series(self, df, y):
-
-        """
-        Plotly scatter plot of X and y.
-        Requires dt.datetime 'date' column.
-        """
-
-        import plotly
-        from plotly.graph_objs import Scatter, Layout
-
-        return plotly.offline.iplot({
-                "data" : [
-                    Scatter(x = df["date"],
-                            y = df[y]
-                    )
-                ],
-
-                "layout" :
-                    Layout(yaxis = dict( title = y),
-                           xaxis = dict( title = "date")
-                    ) 
-        })
-
-
-    def scatter(self, df, x, y):
-
-        """Plotly scatter plot of x and y."""
-
-        import plotly
-        from plotly.graph_objs import Scatter, Layout
-
-        return plotly.offline.iplot({
-                "data" : [
-                    Scatter(x = df[x],
-                            y = df[y],
-                            mode = "markers"
-                    )
-                ],
-
-                "layout" :
-                    Layout(title = "%s vs %s" % (x, y),
-                           xaxis = dict( title = x),
-                           yaxis = dict( title = y)
-                    ) 
-        })
-
-
+        
+        
     def linear_plot_params(self, x, y):
 
         """Calculate plot params."""
@@ -63,195 +25,188 @@ class time_series_analysis(object):
 
     def read_time_series_text_to_dataframe(self, path):
 
-        """Joins all time series text files in a dir into one df."""
+        """
+        Reads all files with *.txt in a dir assuming they are time series.
+        Puts these time series into a dictionary with key of the ts name.
+        """
+
+        print "reading in data"
 
         allFiles = glob.glob(path + "/*.txt")
-        frame = pd.DataFrame()
-        list_ = []
-        for file_ in allFiles:
-            df = pd.read_csv(file_,index_col=None, header=0)
-            list_.append(df)
-        frame = pd.concat(list_, axis = 1)
-
-        return frame
-
-
-
-    def igor_time_to_posix(self, df, igor_time_column_name):
-
-        "Converts igor time in seconds to datetime object."
-
-        import datetime as dt
-        import pandas as pd
-
-        returndf = df.copy()
+        for f in allFiles:
+            ts = pd.read_csv(f)
+            self.time_series_raw[ts.columns[0]] = ts.values
+           
         
-        new_time_column = pd.Series([dt.datetime.fromtimestamp(np.round(x) - self.igor_time) for x in df[igor_time_column_name]])
-        returndf['date'] = new_time_column
-        #returndf.set_index('date')
-        returndf = returndf.set_index(pd.DatetimeIndex(returndf["date"]))
+    def igor_time_to_posix(self, igor_time_column_name):
 
+        """Converts igor time in seconds to datetime object as 'date' in self.time_series_raw."""
         
+        print "converting time"
         
-        del df
-        return returndf
+        self.igor_time_column_name = igor_time_column_name
+        new_time_column = pd.Series([dt.datetime.fromtimestamp(np.round(x) - self.igor_time) for x in self.time_series_raw[igor_time_column_name]])
+        self.date = new_time_column
 
 
-    def remove_background(self, df, start_time, end_time):
+    def nan_points_between_dates(self, start_time, end_time):
 
-        """
-        Minus average value of time series found between bg_start and bg_end for
-        the rest of the time series. Requires datetime "date" column to be present.
-        """
+        """NaN all entries in self.time_series_raw between start and end time."""
 
-        import datetime as dt
-
+        print "removing bad points"
         
-        returndf = df.copy()
-
         for time in [start_time, end_time]:
             if not isinstance(time, dt.datetime):
                 raise TypeError ("%s is not a datetime object" % str(time))
                 break
 
-        start_index = df["date"].searchsorted(start_time)[0]
-        end_index = df["date"].searchsorted(end_time)[0]
-
-        for i, col in enumerate(df.columns):
-
-            if col == "date":
-                pass
-            else:
-                try:
-                    bg_period = df.loc[start_index:end_index, col]
-                    average_bg = bg_period.mean()
-                    
-                    returndf[col] = df[col].subtract(average_bg)
-                except AttributeError:
-                    pass
-                except TypeError:
-                    pass
-
-        del df
-        return returndf
-
-
-    def nan_points_between_dates(self, df, start_time, end_time):
-
-        """
-        Nan all entries in dataframe between start and end time
-        """
-
-        import datetime as dt
+        mask = [i for i, x in enumerate(self.date) if (x > start_time) & (x < end_time)]
+        for key in self.time_series_raw.keys():
+            self.time_series_raw[key][mask] = None
         
-        df_return = df.copy()
-
-        for time in [start_time, end_time]:
-            if not isinstance(time, dt.datetime):
-                raise TypeError ("%s is not a datetime object" % str(time))
-                break
-
-        mask = (df['date'] > start_time) & (df['date'] <= end_time)
-        df_return.loc[mask] = None
-
-        del df
-        return df_return
-
-
-    def remove_start(self, df, start_time):
+    
+    def remove_start(self, start_time):
 
         """Removes dataframe before start_time."""
 
-        df_return = df.copy()
-        return df_return[df['date'] > start_time]
+        mask = [i for i, x in enumerate(self.date) if (x < start_time)]
+        for key in self.time_series_raw.keys():
+            self.time_series_raw[key][mask] = None
 
-
-    def remove_end(self, df, end_time):
+            
+    def remove_end(self, end_time):
 
         """Removes dataframe after end_time."""
 
-        df_return = df.copy()
-        return df_return[df['date'] < end_time]
+        mask = [i for i, x in enumerate(self.date) if (x > end_time)]
+        for key in self.time_series_raw.keys():
+            self.time_series_raw[key][mask] = None    
+    
+    
+    def normalise(self, reagent_ion=None, normalise_to=None):
 
-
-    def normalise(self, df, x, y):
-
-        """Normalise column x in df by column y."""    
-        try:
-            
-            if x != y: 
-                slope = self.linear_plot_params(df[x], df[y]).slope
-                normalisation_factor = df[x] * slope
-                mean_normalisation_factor = np.mean(normalisation_factor)
-
-                df[y] = (df[y] / normalisation_factor).multiply(mean_normalisation_factor)
-
-        except KeyError:
-           # print "'%s' is not a valid key, no normalisation for %s" % (x, y)
-           pass 
+        """
+        Normalise all timeseries in self.time_series_raw by self.reagent_ion
+        unless specificed in kwargs. Option to normalise counts to kwargs e.g. 1e6.
+        """    
         
-        return df
+        print "normalising"
+
+        if not reagent_ion:
+            reagent_ion = self.reagent_ion
+    
+        for y in self.time_series_raw.keys():
+            if (y != self.igor_time_column_name) and (y != self.reagent_ion):          
+                slope = self.linear_plot_params(self.time_series_raw[reagent_ion], self.time_series_raw[y]).slope            
+                if normalise_to:
+                    self.time_series_normalised[y] = (slope * self.time_series_raw[y] * normalise_to) / (self.time_series_raw[reagent_ion]  * slope)
+                else: 
+                    self.time_series_normalised[y] = (slope * self.time_series_raw[y] * np.nanmean(self.time_series_raw[reagent_ion])) / (self.time_series_raw[reagent_ion]  * slope)
 
 
-    def get_reagent_ion_r2s(self, df, y):
+    def remove_background(self, start_time, end_time):
+
+        """Removes background from time series."""
+
+        print "remove background"
+        
+        mask = [i for i, x in enumerate(self.date) if (x > start_time) & (x < end_time)]   
+        for y in self.time_series_raw.keys():       
+            if (y != self.igor_time_column_name) and (y != self.reagent_ion):                   
+                mn = np.nanmin(self.time_series_raw[key][mask])
+                self.time_series_normalised_background[y] = self.time_series_normalised[y] - mn
+                [0 for x in self.time_series_normalised_background[y] if x < 0]
+
+    
+    def remove_bg(self):
+
+        """Removes background from time series."""
+    
+        print "remove background"
+   
+        for y in self.time_series_raw.keys():       
+            if (y != self.igor_time_column_name) and (y != self.reagent_ion):                
+                mn = 1.12 * np.nanmin(self.time_series_normalised[y])
+                self.time_series_normalised_background[y] = self.time_series_normalised[y] - mn
+                [0 for x in self.time_series_normalised_background[y] if x < 0]
+                
+                
+    def get_reagent_ion_r2s(self, list_of_reagent_ions, y):
         
         "Returns a dict with reagent ion keys and R2 values to y."""
     
+        print "Reminder: These correlations are performed on the raw time series."
+    
         trace_and_norm = {}       
         reagent_ions = {}
-        for reagent_ion in self.reagent_ions:
-            reagent_ions[reagent_ion] = round(self.linear_plot_params(df[reagent_ion], df[y]).rvalue**2, 4)
-
+        for reagent_ion in list_of_reagent_ions:
+            reagent_ions[reagent_ion] = round(self.linear_plot_params(self.time_series_raw[reagent_ion], self.time_series_raw[y]).rvalue**2, 4)
         return reagent_ions
     
     
-    def best_reagent_ion(self, df, y, R2_limit):  
+    def best_reagent_ion(self, list_of_reagent_ions, y, R2_limit):  
         
         "Returns the key of the highest R2 value in the dict from self.norm_ion_r2s."""
 
-        reagent_ions = self.get_reagent_ion_r2s(df, y)  
+        reagent_ions = self.get_reagent_ion_r2s(list_of_reagent_ions, y)  
         best = max(reagent_ions.iteritems(), key=operator.itemgetter(1))[0]
 
         if reagent_ions[best] < R2_limit:
-            best = "%f R2 less than %f" % (reagent_ions[best], round(R2_limit, 2))
+            best = "best R2 of %f with %s is less than %f" % (reagent_ions[best], best, round(R2_limit, 2))
 
         return best 
     
+    def generate_correlation_dataframe(self):
+        
+        """Once data is prepared. Run this to get self.correlation_dataframe"""
+
+        print "generating correlation dataframe on time_series_normalised_background"
+        
+        result = {}
+        for key in bonfire.time_series_normalised_background:
+            result[key] = bonfire.time_series_normalised_background[key].flatten().tolist()
+        self.correlation_dataframe = pd.DataFrame(result).corr()
     
-    def top_correlations(self, df, y, n):
+    
+    
+    def top_correlations(self, y, n):
 
-        """Returns list of top n correlations in df for species y."""
-
-        # Get correlations
-        df_corr = df.corr()
+        """Returns list of top n correlations for species y."""
+      
         #list top 20 wave names that correlate
-        top_hits = list(df_corr[y].sort_values(ascending = False).head((n+1)).index)
-        # put date in as well
-        top_hits.insert(0, "date")
+        if len(self.correlation_dataframe) == 0:
+            self.generate_correlation_dataframe()
+            
+        names = list(bonfire.correlation_dataframe[y].sort_values(ascending = False).head((n+1)).index)
+        R2s = list(self.correlation_dataframe[y].sort_values(ascending = False).head((n+1)))
+        top_hits = zip(names, R2s)
         
-        
-        return top_hits
+        return  top_hits[1:]
     
     
-    def diurnalise(self, df):  
+    def diurnalise(self, y):  
 
         """
-        Returns descriptive stats on waves
-        in a df.
+        Returns descriptive stats on waves in a df.
 
-        This one can take a while so best to
-        use on a smaller number of time series.
-
-        Must have 'date' set as 
-        datetime index i.e.
+        Must have 'date' set as datetime index i.e.
         df = df.set_index(pd.DatetimeIndex(df["date"]))
         """
+        
+        print "Generating Diurnal DataFrame for %s" % y
+        
+        ts_df = pd.DataFrame()
+        ts_df['date'] = self.date.dt.strftime("%H:%M")
+        ts_df = ts_df.set_index(pd.DatetimeIndex(self.date.dt.strftime("%H:%M")))
 
-        df['Time'] = df.index.strftime("%H:%M")
-        df = df.groupby('Time').describe().unstack()
+        ts_df[y] = self.time_series_normalised_background[y]
+
+        df = ts_df.groupby('date').describe().unstack()
         df.index = pd.to_datetime(df.index.astype(str))
 
         returndf = df.copy()
-
+        del df
         return returndf
+    
+
 
