@@ -1,9 +1,22 @@
 #!/usr/bin/python
 
+import pandas as pd
+import glob
+import datetime as dt
+import numpy as np
+import scipy.stats
+import operator
+import re
+import collections
+
+
+
 class time_series_analysis(object):
     
+
     def __init__(self, reagent_ion):
-        
+       
+
         self.igor_time = 2082844800
         self.reagent_ion = reagent_ion
         self.time_series_raw = {}
@@ -23,8 +36,9 @@ class time_series_analysis(object):
         """Calculate plot params."""
 
         mask = ~np.isnan(x.astype(float)) & ~np.isnan(y.astype(float))
-        return scipy.stats.linregress(x[mask], y[mask])
-        #return sc.stats.linregress(x, y)
+        #mask = ~np.isnan(x) & ~np.isnan(y) 
+	return scipy.stats.linregress(x[mask], y[mask])
+        #return scipy.stats.linregress(x, y)
 
 
     def read_time_series_text_files(self, path):
@@ -32,61 +46,92 @@ class time_series_analysis(object):
         """
         Reads all files with *.txt in a dir assuming they are time series.
         Puts these time series into a dictionary with key of the ts name.
+	Time series are a numpy array of numpy.float64s
         """
 
-        print "reading in data"
+        print "reading in data to self.time_series_raw"
 
         allFiles = glob.glob(path + "/*.txt")
         for f in allFiles:
             ts = pd.read_csv(f)
-            self.time_series_raw[ts.columns[0]] = ts.values
-           
-        
-    def igor_time_to_posix(self, igor_time_column_name):
+            self.time_series_raw[ts.columns[0]] = np.array([x[0] for x in ts.values])
 
-        """Converts igor time in seconds to datetime object as 'date' in self.time_series_raw."""
+        
+    def time_to_posix(self, time_column_name, igor_time=True):
+
+        """
+	Converts time in seconds to datetime object as self.'date' from time column name in self.time_series_raw.
+	option to convert igor time offset.
+	"""
         
         print "converting time"
         
-        self.igor_time_column_name = igor_time_column_name
-        new_time_column = pd.Series([dt.datetime.fromtimestamp(np.round(x) - self.igor_time) for x in self.time_series_raw[igor_time_column_name]])
+        self.time_column_name = time_column_name
+	if igor_time:
+            new_time_column = pd.Series([dt.datetime.fromtimestamp(np.round(x) - self.igor_time) for x in self.time_series_raw[time_column_name]])
+        else:
+            new_time_column = pd.Series([dt.datetime.fromtimestamp(np.round(x)) for x in self.time_series_raw[time_column_name]])
+
         self.date = new_time_column
+
+
+    def nan_zeros(self):
+
+	"""NaN anything below 0 in traces."""
+
+	for key in self.time_series_raw.keys():
+   	    self.time_series_raw[key] = np.array([np.nan if i <= 0 else i for i in self.time_series_raw[key]])
 
 
     def nan_points_between_dates(self, start_time, end_time):
 
         """NaN all entries in self.time_series_raw between start and end time."""
 
-        print "removing bad points"
-        
         for time in [start_time, end_time]:
             if not isinstance(time, dt.datetime):
                 raise TypeError ("%s is not a datetime object" % str(time))
                 break
 
-        mask = [i for i, x in enumerate(self.date) if (x > start_time) & (x < end_time)]
+        for i, x in enumerate(self.date):
+            if x < start_time:
+	        sti = i+1
+	    if x < end_time:
+	        eti = i+1
+
+	print "removing bad points", sti,":", eti
+
         for key in self.time_series_raw.keys():
-            self.time_series_raw[key][mask] = None
-        
+            self.time_series_raw[key][sti:eti] = np.nan
+
     
     def remove_start(self, start_time):
 
         """Removes dataframe before start_time."""
 
-        mask = [i for i, x in enumerate(self.date) if (x < start_time)]
-        for key in self.time_series_raw.keys():
-            self.time_series_raw[key][mask] = None
+	for i, x in enumerate(self.date):
+ 	    if x > start_time:
+		print "removing start time ", str(start_time), " at index", i  
+                break
 
-            
+	self.date = self.date[i:]  
+        for key in self.time_series_raw.keys():
+            self.time_series_raw[key] = self.time_series_raw[key][i:]
+
+    
     def remove_end(self, end_time):
 
         """Removes dataframe after end_time."""
 
-        mask = [i for i, x in enumerate(self.date) if (x > end_time)]
+	for i, x in enumerate(self.date):
+	    if x > end_time:
+                print "removing end time ", str(end_time), " at index", i
+	        break
+	
+	self.date = self.date[:i]        
         for key in self.time_series_raw.keys():
-            self.time_series_raw[key][mask] = None    
-    
-    
+            self.time_series_raw[key] = self.time_series_raw[key][:i]    
+
+ 
     def normalise(self, reagent_ion=None, normalise_to=None):
 
         """
@@ -96,16 +141,13 @@ class time_series_analysis(object):
         
         print "normalising"
 
-        if not reagent_ion:
+        if reagent_ion is None:
             reagent_ion = self.reagent_ion
     
         for y in self.time_series_raw.keys():
-            if (y != self.igor_time_column_name) and (y != self.reagent_ion):          
-                slope = self.linear_plot_params(self.time_series_raw[reagent_ion], self.time_series_raw[y]).slope            
-                if normalise_to:
-                    self.time_series_normalised[y] = (slope * self.time_series_raw[y] * normalise_to) / (self.time_series_raw[reagent_ion]  * slope)
-                else: 
-                    self.time_series_normalised[y] = (slope * self.time_series_raw[y] * np.nanmean(self.time_series_raw[reagent_ion])) / (self.time_series_raw[reagent_ion]  * slope)
+            if (y != self.time_column_name):          
+            
+                self.time_series_normalised[y] = np.nanmean(self.time_series_raw[reagent_ion]) *  (self.time_series_raw[y]  / self.time_series_raw[reagent_ion])
 
 
     def remove_background(self, start_time, end_time):
@@ -114,11 +156,11 @@ class time_series_analysis(object):
 
         print "remove background"
    
-        start_index = bonfire.date.tolist().index(bg_start)
-        end_index = bonfire.date.tolist().index(bg_end)
+        start_index = self.date.tolist().index(start_time)
+        end_index = self.date.tolist().index(end_time)
 
         for y in self.time_series_raw.keys():       
-            if (y != self.igor_time_column_name) and (y != self.reagent_ion):   
+            if (y != self.time_column_name) and (y != self.reagent_ion):   
 #                 mn = np.nanmin(self.time_series_normalised[y][start_index:end_index])
                 self.background[y] = np.nanmin(self.time_series_normalised[y][start_index:end_index])
                 if np.isnan(self.background[y]):
@@ -128,7 +170,6 @@ class time_series_analysis(object):
     
 #                 self.time_series_normalised_background[y] = self.time_series_normalised[y] - mn
         
-                self.time_series_normalised_background[y][self.time_series_normalised_background[y] < 0] = 0
 #                 np.where(self.time_series_normalised_background[y] < 0, self.time_series_normalised_background[y], 0)
 
     
@@ -139,18 +180,17 @@ class time_series_analysis(object):
         print "remove background"
    
         for y in self.time_series_raw.keys():       
-            if (y != self.igor_time_column_name) and (y != self.reagent_ion):                
+            if (y != self.time_column_name) and (y != self.reagent_ion):                
                 mn = 1.12 * np.nanmin(self.time_series_normalised[y])
                 self.time_series_normalised_background[y] = self.time_series_normalised[y] - mn
 
-#                 self.time_series_normalised_background[y][self.time_series_normalised_background[y] < 0] = 0
 
                 
     def get_reagent_ion_r2s(self, list_of_reagent_ions, y):
         
         "Returns a dict with reagent ion keys and R2 values to y."""
     
-        print "Reminder: These correlations are performed on the raw time series."
+        #print "Reminder: These correlations are performed on the raw time series."
     
         trace_and_norm = {}       
         reagent_ions = {}
