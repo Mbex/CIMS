@@ -30,7 +30,8 @@ class time_series_analysis(object):
         self.time_series_whitworth = {}
         self.background = {}
         self.background_conc = {}
-        
+        self.merge_similar_files_method_used = False
+
     def linear_plot_params(self, x, y):
 
         """Calculate plot params."""
@@ -41,23 +42,79 @@ class time_series_analysis(object):
         #return scipy.stats.linregress(x, y)
 
 
-    def read_time_series_text_files(self, path):
+    def read_time_series_text_files(self, path, ex=".txt"):
 
         """
         Reads all files with *.txt in a dir assuming they are time series.
         Puts these time series into a dictionary with key of the ts name.
-	Time series are a numpy array of numpy.float64s
+	Time series are a numpy array of numpy.float64s.
+        option to change extension.
         """
 
         print "reading in data to self.time_series_raw"
 
-        allFiles = glob.glob(path + "/*.txt")
+        allFiles = glob.glob(path + "/*"+ex)
         for f in allFiles:
             ts = pd.read_csv(f)
             self.time_series_raw[ts.columns[0]] = np.array([x[0] for x in ts.values])
 
+
+    def merge_similar_files(self, list_of_files, file_out_name):
+
+        """
+        Provided with a list of identically formatted files, this method will merge all files into a single file whose name is user specified. The header is read from the first file in the list_of_files and ignored from then on.
+        """
+        list_of_files = sorted(list_of_files)
+
+        f_out = open(file_out_name,"a")
+
+        for line in open(list_of_files[0]):
+            line = ','.join(line.split())+"\n"
+            f_out.write(line)
+                
+        for f in list_of_files[1:]:
+            f_open = open(f)
+            f_open.next()
         
-    def time_to_posix(self, time_column_name, igor_time=True):
+            for line in f_open:
+                line = ','.join(line.split())+"\n"
+                f_out.write(line)
+            f_open.close()
+        
+        f_out.close()
+
+        self.merge_similar_files_method_used = True
+
+
+    def read_time_series_from_csv(self, f, sep=",", CIMS1=False):
+
+        """
+        Reads in data from a single file assuming it is a collection of time series.
+        Puts these time series into a dictionary with key of the ts name.
+        Time series are a numpy array of numpy.float64s
+        """
+
+        if self.merge_similar_files_method_used:
+            data = pd.read_csv(f, sep=sep, lineterminator = '\n')
+        else:
+	    data = pd.read_csv(f, sep=sep)
+
+ 
+	for col in data.columns:
+            if CIMS1:
+                data.sort_values(by='uxt0', ascending=1)
+                if "Hz" in col:
+                    self.time_series_raw[col] = np.array([float(x) for x in data[col].values])
+                elif "uxt0" in col:
+                    self.time_series_raw[col] = np.array(data[col].values)
+            else:
+                self.time_series_raw[col] = np.array(data[col].values)
+
+
+
+        del data
+        
+    def time_to_posix(self, time_column_name, igor_time=False):
 
         """
 	Converts time in seconds to datetime object as self.'date' from time column name in self.time_series_raw.
@@ -92,6 +149,8 @@ class time_series_analysis(object):
                 raise TypeError ("%s is not a datetime object" % str(time))
                 break
 
+        sti = 0
+        eti = 0
         for i, x in enumerate(self.date):
             if x < start_time:
 	        sti = i+1
@@ -108,6 +167,7 @@ class time_series_analysis(object):
 
         """Removes dataframe before start_time."""
 
+        i=0
 	for i, x in enumerate(self.date):
  	    if x > start_time:
 		print "removing start time ", str(start_time), " at index", i  
