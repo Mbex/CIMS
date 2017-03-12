@@ -30,7 +30,8 @@ class time_series_analysis(object):
         self.time_series_whitworth = {}
         self.background = {}
         self.background_conc = {}
-        
+        self.merge_similar_files_method_used = False
+
     def linear_plot_params(self, x, y):
 
         """Calculate plot params."""
@@ -63,6 +64,7 @@ class time_series_analysis(object):
         """
         Provided with a list of identically formatted files, this method will merge all files into a single file whose name is user specified. The header is read from the first file in the list_of_files and ignored from then on.
         """
+        list_of_files = sorted(list_of_files)
 
         f_out = open(file_out_name,"a")
 
@@ -81,6 +83,8 @@ class time_series_analysis(object):
         
         f_out.close()
 
+        self.merge_similar_files_method_used = True
+
 
     def read_time_series_from_csv(self, f, sep=",", CIMS1=False):
 
@@ -90,10 +94,15 @@ class time_series_analysis(object):
         Time series are a numpy array of numpy.float64s
         """
 
-	data = pd.read_csv(f, sep=sep)
-        
+        if self.merge_similar_files_method_used:
+            data = pd.read_csv(f, sep=sep, lineterminator = '\n')
+        else:
+	    data = pd.read_csv(f, sep=sep)
+
+ 
 	for col in data.columns:
             if CIMS1:
+                data.sort_values(by='uxt0', ascending=1)
                 if "Hz" in col:
                     self.time_series_raw[col] = np.array([float(x) for x in data[col].values])
                 elif "uxt0" in col:
@@ -140,6 +149,8 @@ class time_series_analysis(object):
                 raise TypeError ("%s is not a datetime object" % str(time))
                 break
 
+        sti = 0
+        eti = 0
         for i, x in enumerate(self.date):
             if x < start_time:
 	        sti = i+1
@@ -156,6 +167,7 @@ class time_series_analysis(object):
 
         """Removes dataframe before start_time."""
 
+        i=0
 	for i, x in enumerate(self.date):
  	    if x > start_time:
 		print "removing start time ", str(start_time), " at index", i  

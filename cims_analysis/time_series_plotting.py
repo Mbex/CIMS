@@ -1,11 +1,35 @@
-def quick_ts(df, y):
+from bokeh.plotting import figure, output_notebook, show
+from bokeh.io import gridplot, output_file, show
+from bokeh.models import HoverTool, ColumnDataSource, OpenURL, DatetimeTickFormatter, FixedTicker, Range1d, LinearAxis
+from bokeh.models.tools import Tool
+from bokeh.palettes import Viridis256, Spectral11
+from bokeh.charts import BoxPlot
+
+
+
+def quick_ts(x, y):
+
+
+
+
+    tools="pan,wheel_zoom,box_zoom,reset,hover"
+
+#    hover = HoverTool()
+#    hover.tooltips = [
+#        ("","@y"),
+#    ]
+#    TOOLS = [hover]
+
+    # make figure
     p = figure(
         x_axis_type="datetime",
         plot_width=900,
         plot_height=500,
+        tools=tools #TOOLS
     )
 
-    p.yaxis.axis_label = "["+y+"]"
+
+    p.yaxis.axis_label = "counts"
     p.xaxis.formatter=DatetimeTickFormatter(formats=dict(
             hours=["%d %b"],
              days=["%d %b"],
@@ -17,7 +41,7 @@ def quick_ts(df, y):
     p.yaxis.axis_label_text_font_size = '14pt'    
     p.yaxis.major_label_text_font_size = '14pt'    
     p.xaxis.major_label_text_font_size = '14pt'  
-    p.line(x=df['date'], y=df[y], line_color="blue")
+    p.line(x, y, line_color="blue")
 
     show(p)
     
