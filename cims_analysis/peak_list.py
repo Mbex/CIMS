@@ -30,6 +30,8 @@ class Peaklist(object):
         self.integer_mass: int list, rounded copy of x0
         self.integer_mass_minus_reagent_ion: copy of integer_mass minus exact mass of reagent ion
         self.mass_defect: float list, mass defect of peaks
+        self.mass_defect_minus_reagent_ion : float list, mass defect of peaks (with reagent ion removed)
+
         self._KEM: dict, keys=kendrick base, vals=float list, normalised mass to new kendrick base
         self._KMD: dict, keys=kendrick base, vals=float list, mass defect normalised to new kendrick base
         self._KMD_error: dict, keys=kendrick base, vals=float list, mass defect error to new kendrick base     
@@ -39,14 +41,13 @@ class Peaklist(object):
         self.suggested_formulas: list of dicts, 
                           for ith self.ion, ith suggested_formulas is the suggested formulas
                           with a weighting based on how many times it was picked.
-        self.suggested_compounds: list of dicts, 
-                          for ith self.ion, ith suggested_compounds is the suggested ChemSpider objects
         self.suggested_names: list of dicts, 
                           for ith self.ion, ith suggested_compounds is the suggested common names 
-        self.error_on_assignment: float list, where ith new formulas are suggested, the ith error on assignment 
-                          is calculated and stored here. 
+        self.suggested_errors: list of dicts, 
+                          for ith self.ion, ith suggested_compounds is the suggested error of the assignment 
         """
-        
+        self.directory = ""
+        self.fname = ""
         self.reagent_ion = reagent_ion
         self.kendrick_bases = kendrick_bases
         self.kendrick_base_mass = [self._Mass_calculator(mass) for mass in self.kendrick_bases]    
@@ -57,16 +58,23 @@ class Peaklist(object):
         self.integer_mass = None
         self.integer_mass_minus_reagent_ion = None
         self.mass_defect = None
+        self.mass_defect_minus_reagent_ion = None
         self._KEM = {}
         self._KMD = {}
         self._KMD_error = {}      
         self.KMD_matches = {}      
         self.suggested_formulas = {} 
-        self.suggested_compounds = {}
         self.suggested_names = {} 
-        self.error_on_assignment = {}
+        self.suggested_errors = {}
+
+     
+    def _Flatten(self, list_of_lists):
+        
+        """flattens a list of lists into a list"""
+        
+        return [item for sublist in list_of_lists for item in sublist]
     
-                       
+    
     def _Remove_punctuation(self, string):
 
         """Remove punctuation from string."""
@@ -201,7 +209,9 @@ class Peaklist(object):
         self.sumFormula = []
         self.x0 = []    
         self.KMD_matches = {}
-
+        self.directory = directory
+        self.fname = fname
+        
         df = pd.read_csv(directory+fname, header=0, **kwargs)
         self.ion = df["ion"].values.tolist()
         self.sumFormula = df['sumFormula'].values.tolist()
@@ -226,7 +236,8 @@ class Peaklist(object):
                                              x >= reagent_ion_exact_mass else 
                                              x for x in self.x0]   
 
-        self.mass_defect = [round(x - y, 6) for x, y in zip(self.integer_mass, self.x0)]
+        self.mass_defect_minus_reagent_ion = [round(y - x, 6) for x, y in zip(self.integer_mass_minus_reagent_ion, self.exact_mass_minus_reagent_ion)]
+        self.mass_defect = [round(y - x, 6) for x, y in zip(self.integer_mass, self.x0)]
 
         
     def _Calc_kendrick_mass_defect(self, kendrick_base, kendrick_base_mass):
@@ -236,7 +247,7 @@ class Peaklist(object):
         Requries that _Calc_mass_defect has been run first.
         """
 
-        assert len(self.mass_defect) > 0, '''No data in self.mass_defect. Did _Calc_mass_defect run correctly?'''
+        assert len(self.mass_defect_minus_reagent_ion) > 0, '''No data in self.mass_defect. Did _Calc_mass_defect run correctly?'''
         
         print "calculating %s kendrick mass defects" % kendrick_base
              
@@ -245,7 +256,7 @@ class Peaklist(object):
         
         normalise = (np.round(kendrick_base_mass) / kendrick_base_mass)
         kem = [round(x * normalise, 6) for x in self.exact_mass_minus_reagent_ion]
-        kmd = [round(x - y, 6) for x, y in zip(self.integer_mass_minus_reagent_ion, kem)]
+        kmd = [round(y - x, 6) for x, y in zip(self.integer_mass_minus_reagent_ion, kem)]
         self._KEM[kendrick_base] = kem
         self._KMD[kendrick_base] = kmd
         
@@ -361,29 +372,45 @@ class Peaklist(object):
         This is the function that decides if what the solver has returned is rubbish or not.
         """
         
-        # remove reagent ion
         suggested_formula = self._Remove_reagent_ion(suggested_formula)
         suggested_formula = self._Counted_elements_to_formula(suggested_formula)
         
-        return_val = 0
+        return_val = 1
         neg_count = 0
         pos_count = 0
 
         list_of_compounds = cs.simple_search_by_formula(suggested_formula)
         
-        if not len(list_of_compounds) < 1: 
-            return_val = 1
-        if not self._Is_hydrocarbon(suggested_formula):
-            return_val = 1
+        if len(list_of_compounds) < 1: 
+            return_val = 0
+        if self._Is_hydrocarbon(suggested_formula):
+            return_val = 0
             
         return return_val
+    
+    
+    def _Matched(self, kendrick_base, known=True):
 
-     
-    def _Flatten(self, list_of_lists):
-        
-        """flattens a list of lists into a list"""
-        
-        return [item for sublist in list_of_lists for item in sublist]
+        """
+        Returns list of KMD matches for the passed kendrick base
+        containin; known matches i.e. if a '-' is present in the name
+        indicating it has been assigned a formula; or unknown matches
+        if the '-' character is not present
+        """
+
+        matched = []
+        for matches in self.KMD_matches[kendrick_base]:
+            if known:
+                matched.append([x for x in matches if "-" in x])
+            else:
+                matched.append([x for x in matches if not "-" in x])
+
+        matched = list(set(self._Flatten(matched)))
+
+        return matched
+    
+    
+    
 
         
     def _Get_KMD_match_suggestions(self):
@@ -399,15 +426,13 @@ class Peaklist(object):
         for kendrick_base in self.kendrick_bases:
             
             self.suggested_formulas[kendrick_base] = [[] for x in self.ion]
+            self.suggested_errors[kendrick_base] = [[] for x in self.ion]
             self.suggested_names[kendrick_base] = [[] for x in self.ion]
             
             print "Looking at matches for %s" % kendrick_base
             
             # find those KMD matches that are unknown
-            matched_unknowns = []
-            for matches in organic_acid_test.KMD_matches[kendrick_base]:
-                matched_unknowns.append([x for x in matches if not "-" in x])
-            matched_unknowns = list(set(self._Flatten(matched_unknowns)))
+            matched_unknowns = self._Matched(kendrick_base, known=False)
 
             # for each of those uknowns
             for i, unknown in enumerate(matched_unknowns):
@@ -415,14 +440,14 @@ class Peaklist(object):
                 print "matching %d of %d unknowns" % (i+1, len(matched_unknowns))         
                  
                 # find the KMD matches that are known
-                matched_knowns = []
-                for matches in organic_acid_test.KMD_matches[kendrick_base]:
-                    matched_knowns.append([x for x in matches if "-" in x])
-                matched_knowns = list(set(self._Flatten(matched_knowns)))
+                matched_knowns = self._Matched(kendrick_base, known=True)
 
                 # for each of those knowns
                 guesses_formulas = [] 
                 guesses_names = [] 
+                guesses_errors = []
+                
+                
                 for known in matched_knowns:
                 
                     unknown_index = self.ion.index(unknown)
@@ -442,12 +467,20 @@ class Peaklist(object):
 
                         # Get formula without reagent ion
                         suggested_formula_noRI = self._Counted_elements_to_formula(self._Remove_reagent_ion(suggested_formula))
+                        
                         CScompounds = cs.simple_search_by_formula(suggested_formula_noRI)
                         suggested_names = self._Get_visible_compounds(CScompounds, names=True)
                         
-                        # put known and suggested pairs into list
-                        guesses_formulas.append((known, suggested_formula))
-                        guesses_names.append((known, suggested_names))
+                        if suggested_names == []:
+                            pass
+                        else:      
+                        
+                            error = self._Error_on_assignment(suggested_formula, unknown_mass)
+                                         
+                            # put known and suggested pairs into list
+                            guesses_formulas.append((known, suggested_formula))
+                            guesses_errors.append((suggested_formula, error))
+                            guesses_names.append((known, suggested_names))
                         
                     else:
                         pass
@@ -455,9 +488,21 @@ class Peaklist(object):
                 # put lists of tuples of the known and suggested unknown
                 # into an object variable at the same index as the unknown
                 self.suggested_formulas[kendrick_base][unknown_index] = guesses_formulas
+                self.suggested_errors[kendrick_base][unknown_index] = guesses_errors
                 self.suggested_names[kendrick_base][unknown_index] = guesses_names
+                    
+                    
+                    
+    def _Error_on_assignment(self, suggested_formula, unknown_mass):
 
+        """Provides ppm error on assignment of unknown peak with sugggested formula."""
+
+        exact_x0 = self._Mass_calculator(suggested_formula)
+        error = 1e6 * ((unknown_mass - exact_x0) / exact_x0) 
+
+        return error
  
+
     def _Get_visible_compounds(self, list_of_csCompounds, names=False):
 
         """Takes a list of cs.Compounds and returns their
@@ -501,21 +546,6 @@ class Peaklist(object):
       
         return ("." not in compound.smiles) and (neg_count == pos_count) and ("$" not in compound.common_name) and ("{" not in compound.common_name) and ("^" not in compound.common_name)
     
-
-    def _Error_on_assignment(self):
-        
-        """Provides ppm error on assignment of unknown peak with sugggested formula."""
-
-        self.error_on_assignment = ["NaN" for x in self.ion]
-        for i, item in enumerate(self.suggested_formulas):
-            try:
-                exact_x0 = self._Mass_calculator(item.keys()[0])
-                self.error_on_assignment = 1e6 * ((self.x0[i] - exact_x0) / exact_x0) 
-            except ValueError:
-                pass
-            except AttributeError:
-                pass
-
             
     def _Weighted_guesses(self, list_of_tuple_pairs):
 
@@ -567,7 +597,35 @@ class Peaklist(object):
                     pass # weighted_guess returns {}
 
         return new_peaklist
+
     
+    def Assignment_info(self):
+
+        """Collect estimated assignment info into dataframe"""
+
+        assignment_info = pd.DataFrame(columns = ["ion", "kendrick base", "suggested by", "suggested formula", "error / ppm", "names"])
+
+        i = 0
+        for kendrick_base in self.kendrick_bases:
+
+            matched_unknowns = sorted(self._Matched(kendrick_base, known=False))
+
+            for matched_unknown in matched_unknowns:
+
+                unknown_index = self.ion.index(matched_unknown)
+                formulas = self.suggested_formulas[kendrick_base][unknown_index]
+                errors = self.suggested_errors[kendrick_base][unknown_index]
+                names = self.suggested_names[kendrick_base][unknown_index]
+
+                for formula, error, name in zip(formulas, errors, names):
+
+                    assignment_info.loc[i] = [matched_unknown, kendrick_base, formula[0], formula[1],round(error[1],4), str([str(x) for x in name[1]]).replace("'","").replace("[","").replace("]","")]
+                    i +=1
+
+        assignment_info = assignment_info.sort_values(by=["ion","kendrick base"])    
+
+        return assignment_info
+
     
     def Run(self):
         
@@ -582,14 +640,4 @@ class Peaklist(object):
         
         # Stage2. Get suggested formulas and compounds for matches
         self._Get_KMD_match_suggestions()
-#         self._Error_on_assignment()
-
-
-
-
-
-
-
-
-
 
