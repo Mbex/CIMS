@@ -175,8 +175,15 @@ class time_series_analysis(object):
 
 	self.date = self.date[i:]  
         for key in self.time_series_raw.keys():
-            self.time_series_raw[key] = self.time_series_raw[key][i:]
 
+	    try:
+                self.time_series_raw[key] = self.time_series_raw[key][i:]
+                self.time_series_normalised[key] = self.time_series_normalised[key][i:]
+                self.time_series_normalised_background[key] = self.time_series_normalised_background[key][i:]
+                self.time_series_conc[key] = self.time_series_conc[key][i:]
+
+	    except KeyError:
+		pass
     
     def remove_end(self, end_time):
 
@@ -189,7 +196,14 @@ class time_series_analysis(object):
 	
 	self.date = self.date[:i]        
         for key in self.time_series_raw.keys():
-            self.time_series_raw[key] = self.time_series_raw[key][:i]    
+            try:
+                self.time_series_raw[key] = self.time_series_raw[key][:i]
+                self.time_series_normalised[key] = self.time_series_normalised[key][:i]
+                self.time_series_normalised_background[key] = self.time_series_normalised_background[key][:i]
+                self.time_series_conc[key] = self.time_series_conc[key][:i]
+
+            except KeyError:
+                pass
 
  
     def normalise(self, reagent_ion=None, normalise_to=None):
@@ -205,31 +219,33 @@ class time_series_analysis(object):
             reagent_ion = self.reagent_ion
     
         for y in self.time_series_raw.keys():
-            if (y != self.time_column_name):          
+            if (y != self.time_column_name) and (y != self.reagent_ion):
             
-                self.time_series_normalised[y] = np.nanmean(self.time_series_raw[reagent_ion]) *  (self.time_series_raw[y]  / self.time_series_raw[reagent_ion])
+                self.time_series_normalised[y] = np.nanmean(self.time_series_raw[reagent_ion]) *  self.time_series_raw[y]  / self.time_series_raw[reagent_ion]
 
 
-    def remove_background(self, start_time, end_time):
+    def remove_background(self, start_time, end_time, list_of_keys_to_ignore):
 
         """Removes background from time series."""
 
         print "remove background"
    
+	list_of_keys_to_ignore.extend([self.time_column_name, self.reagent_ion])
+
         start_index = self.date.tolist().index(start_time)
         end_index = self.date.tolist().index(end_time)
 
+
         for y in self.time_series_raw.keys():       
-            if (y != self.time_column_name) and (y != self.reagent_ion):   
+            if y not in list_of_keys_to_ignore :   
 #                 mn = np.nanmin(self.time_series_normalised[y][start_index:end_index])
                 self.background[y] = np.nanmin(self.time_series_normalised[y][start_index:end_index])
-                if np.isnan(self.background[y]):
-                    pass
-                else:
-                    self.time_series_normalised_background[y] = self.time_series_normalised[y] - self.background[y] 
+#                if np.isnan(self.background[y]):
+#                    pass
+#                else:
+                self.time_series_normalised_background[y] = self.time_series_normalised[y] - self.background[y] 
     
-#                 self.time_series_normalised_background[y] = self.time_series_normalised[y] - mn
-        
+#                 self.time_series_normalised_background[y] = self.time_series_normalised[y] - mn        
 #                 np.where(self.time_series_normalised_background[y] < 0, self.time_series_normalised_background[y], 0)
 
     
@@ -239,9 +255,10 @@ class time_series_analysis(object):
     
         print "remove background"
    
-        for y in self.time_series_raw.keys():       
+        for y in self.time_series_normalised.keys():       
             if (y != self.time_column_name) and (y != self.reagent_ion):                
                 mn = 1.12 * np.nanmin(self.time_series_normalised[y])
+                self.background[y] = mn
                 self.time_series_normalised_background[y] = self.time_series_normalised[y] - mn
 
 
@@ -250,7 +267,7 @@ class time_series_analysis(object):
         
         "Returns a dict with reagent ion keys and R2 values to y."""
     
-        #print "Reminder: These correlations are performed on the raw time series."
+#        print "Reminder: These correlations are performed on the raw time series."
     
         trace_and_norm = {}       
         reagent_ions = {}
@@ -329,32 +346,71 @@ class time_series_analysis(object):
         
         """Applies calibration to self.time_series_normalised_background"""
         
-        print "calibrating"
+        print "calibrating - this has changed check if you are using bonfire night"
 
         ts_keys = self.time_series_normalised_background.keys()
         cf_keys = calibration_factors.keys()
-        
-        for ts_key in ts_keys:
-            for cf_key in cf_keys:
-                try:
-                    self.time_series_conc[ts_key] = self.time_series_normalised_background[ts_key] / calibration_factors[ts_key]
-                    self.background_conc[ts_key] = self.background[ts_key] / calibration_factors[ts_key]
-               
-                except KeyError:
-                    
-                    self.time_series_conc[ts_key] = self.time_series_normalised_background[ts_key]  / calibration_factors["C2H4IO2_"]
-                    self.background_conc[ts_key] = self.background[ts_key] / calibration_factors["C2H4IO2_"]                    
-                    
-                    if "C" in self._Count_elements(ts_key).keys():
-                        
-                        nCarbons = self._Count_elements(ts_key)['C']  
-                        
-                        if nCarbons == 1:
-                
-                            self.time_series_conc[ts_key] = self.time_series_normalised_background[ts_key]  / calibration_factors["CH2IO2_"]
-                            self.background_conc[ts_key] = self.background[ts_key] / calibration_factors["CH2IO2_"]
+       
+	common_keys = [x for x in ts_keys if x in cf_keys] # list(set(ts_keys, cf_keys))
+ 
+#	for key in common_keys:
+#	        self.time_series_conc[ts_key] = self.time_series_normalised_background[ts_key] / calibration_factors[ts_key]
+#       	self.background_conc[ts_key] = self.background[ts_key] / calibration_factors[ts_key]
 
-                    
+#	for key in ts_keys():
+#		if key not in common_key:
+#	                self.time_series_conc[ts_key] = self.time_series_normalised_background[ts_key] / calibration_factors[default]
+#	                self.background_conc[ts_key] = self.background[ts_key] / calibration_factors[default]
+
+
+#        for ts_key in ts_keys:
+
+#            	for cf_key in cf_keys:
+
+#			if ts_key == cf_key:
+
+	for ts_key in ts_keys:
+		if ts_key in common_keys:
+
+			print ts_key, np.nanmean(self.time_series_normalised_background[ts_key])
+			self.time_series_conc[ts_key] = np.divide(self.time_series_normalised_background[ts_key], calibration_factors[ts_key])
+			print ts_key, np.nanmean(self.time_series_conc[ts_key])
+#              		self.background_conc[ts_key] = self.background[ts_key] / calibration_factors[ts_key]
+
+		else:
+        		self.time_series_conc[ts_key] = np.divide(self.time_series_normalised_background[ts_key], calibration_factors["default"])
+
+
+#		    try:        
+#
+#                        elements = self._Count_elements(ts_key)
+#	                if "C" in elements.keys() and "Cl" not in elements.keys():
+#                       
+#                           nCarbons = elements['C']
+#                       
+#                           if nCarbons == 1:
+#               
+#                               self.time_series_conc[ts_key] = self.time_series_normalised_background[ts_key]  / calibration_factors["default_C1"]
+#                               self.background_conc[ts_key] = self.background[ts_key] / calibration_factors["default_C1"]
+#
+#                           else:
+#		                self.time_series_conc[ts_key] = self.time_series_normalised_background[ts_key]  / calibration_factors["default_gtC1"]
+#	                        self.background_conc[ts_key] = self.background[ts_key] / calibration_factors["default_gtC1"]
+#
+#                       else: 
+#
+#                           self.time_series_conc[ts_key] = self.time_series_normalised_background[ts_key]  / calibration_factors["default"]
+#                          self.background_conc[ts_key] = self.background[ts_key] / calibration_factors["default"]
+#
+#                   except KeyError:
+#
+#                     	self.time_series_conc[ts_key] = self.time_series_normalised_background[ts_key]  / calibration_factors["default"]
+#                        self.background_conc[ts_key] = self.background[ts_key] / calibration_factors["default"]
+
+
+
+
+
 
                     
     def _Count_elements(self, moiety):
